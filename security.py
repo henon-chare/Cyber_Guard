@@ -7,3 +7,5 @@ def hash_password(password):
 
 def verify_password(password, hash):
     return pwd.verify(password, hash)
+
+###############################
