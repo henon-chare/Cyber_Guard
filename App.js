@@ -455,12 +455,17 @@ const DomainTrackingComponent = ({ onBack, token }) => {
   }, [token, fetchDomains]);
 
   const handleGlobalDomainReport = () => {
+    if (!selectedDomain) {
+      alert("Please select a domain from the sidebar first to generate a report.");
+      return;
+    }
     setIsPwdModalOpen(true);
   };
 
+  // UPDATED: Calls the new specific domain report endpoint
   const downloadReportWithPassword = async (password) => {
     try {
-        const res = await fetch("http://localhost:8000/domain/global-report", {
+        const res = await fetch(`http://localhost:8000/domain/report/${selectedDomain.id}`, {
             method: "POST",
             headers: { "Content-Type": "application/json", 'Authorization': `Bearer ${token}` },
             body: JSON.stringify({ password: password })
@@ -472,7 +477,7 @@ const DomainTrackingComponent = ({ onBack, token }) => {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `global_domain_inventory.pdf`;
+        a.download = `${selectedDomain.domain_name}_report.pdf`;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -543,7 +548,6 @@ const DomainTrackingComponent = ({ onBack, token }) => {
     }
   };
 
-  // --- UPDATED: handleSelect now loads manual_data from API ---
   const handleSelect = async (domainId) => {
     const domain = domains.find((d) => d.id === domainId);
     setSelectedDomain(domain);
@@ -557,18 +561,15 @@ const DomainTrackingComponent = ({ onBack, token }) => {
       if (!res.ok) throw new Error("Failed to fetch details");
       const data = await res.json();
       
-      // FIX: Load manual_data from API into local state
-      // If API has manual_data, use it. Otherwise, initialize with defaults and basic API info.
       if (data.manual_data && Object.keys(data.manual_data).length > 0) {
           setDomainManualDataMap(prev => ({
               ...prev,
               [domain.domain_name]: {
-                  ...DEFAULT_MANUAL_DATA, // Ensure structure exists
-                  ...data.manual_data     // Override with saved values
+                  ...DEFAULT_MANUAL_DATA, 
+                  ...data.manual_data     
               }
           }));
       } else {
-          // Legacy support or first time load
           setDomainManualDataMap(prev => ({
               ...prev,
               [domain.domain_name]: {
@@ -640,7 +641,6 @@ const DomainTrackingComponent = ({ onBack, token }) => {
     }));
   };
 
-  // --- UPDATED: saveManualData now sends data to backend ---
   const saveManualData = async () => {
     if (!selectedDomain) return;
     
@@ -666,7 +666,6 @@ const DomainTrackingComponent = ({ onBack, token }) => {
     } catch (err) {
         console.error(err);
         alert("Error saving data: " + err.message);
-        // Keep edit mode on so user can retry
     }
   };
 
@@ -801,12 +800,14 @@ const DomainTrackingComponent = ({ onBack, token }) => {
               </div>
               
               <div style={{ display: "flex", gap: "10px" }}>
+                {/* UPDATED Button Label and Action */}
                 <button 
                     onClick={handleGlobalDomainReport} 
                     className="up-btn-gray" 
                     style={{ fontSize: "0.8rem" }}
+                    title="Generate PDF for this domain only"
                 >
-                    📄 Inventory Report
+                    📄 Domain Report
                 </button>
                 <button 
                     onClick={handleRescan} 
