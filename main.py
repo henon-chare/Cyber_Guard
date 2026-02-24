@@ -713,7 +713,7 @@ async def add_domain(request: Request, current_user: User = Depends(auth.get_cur
         _perform_scan(existing, db)
         return {"message": "Domain refreshed", "id": existing.id}
     
-    new_domain = Domain(domain_name=clean_domain, security_score=0, user_id=current_user.id, ssl_data='{}', whois_data='{}', dns_data='{}')
+    new_domain = Domain(domain_name=clean_domain, security_score=0, user_id=current_user.id, ssl_data='{}', whois_data='{}', dns_data='{}', manual_data='{}')
     db.add(new_domain); db.commit(); db.refresh(new_domain)
     _perform_scan(new_domain, db)
     return {"message": "Domain added", "id": new_domain.id}
@@ -721,19 +721,49 @@ async def add_domain(request: Request, current_user: User = Depends(auth.get_cur
 @app.get("/domain/detail/{id}")
 def get_domain_detail(id: int, current_user: User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
     domain = db.query(Domain).filter(Domain.id == id, Domain.user_id == current_user.id).first()
-    if not domain: raise HTTPException(status_code=404, detail="Domain not found")
+    if not domain: 
+        raise HTTPException(status_code=404, detail="Domain not found")
     
+    # Parse the JSON data that EXISTS in the model
     ssl_data = json.loads(domain.ssl_data) if domain.ssl_data else {}
     whois_data = json.loads(domain.whois_data) if domain.whois_data else {}
     dns_data = json.loads(domain.dns_data) if domain.dns_data else {}
 
+    # FIX: Re-implemented manual_data parsing with error handling
+    # We wrap it in try-except to prevent crashes if data is corrupted in DB
+    manual_data = {}
+    try:
+        if domain.manual_data:
+            manual_data = json.loads(domain.manual_data)
+    except (json.JSONDecodeError, TypeError):
+        # If data is bad, default to empty dict so app doesn't crash
+        manual_data = {}
+
     return {
-        "id": domain.id, "domain_name": domain.domain_name, "security_score": domain.security_score,
-        "last_scanned": domain.last_scanned, "ssl_status": ssl_data.get("status", "Unknown"),
-        "ssl_expires": ssl_data.get("expires"), "ssl_issuer": ssl_data.get("issuer", "Unknown"), 
-        "registrar": whois_data.get("registrar", "Unknown"), "creation_date": whois_data.get("created"), 
-        "expiration_date": whois_data.get("expires"), "dns_records": dns_data
+        "id": domain.id, 
+        "domain_name": domain.domain_name, 
+        "security_score": domain.security_score,
+        "last_scanned": domain.last_scanned, 
+        "ssl_status": ssl_data.get("status", "Unknown"),
+        "ssl_expires": ssl_data.get("expires"), 
+        "ssl_issuer": ssl_data.get("issuer", "Unknown"), 
+        "registrar": whois_data.get("registrar", "Unknown"), 
+        "creation_date": whois_data.get("created"), 
+        "expiration_date": whois_data.get("expires"), 
+        "dns_records": dns_data,
+        "manual_data": manual_data  # CRITICAL: Sending this back to Frontend
     }
+
+@app.post("/domain/update-manual/{id}")
+def update_domain_manual(id: int, payload: dict, current_user: User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """Endpoint to save the manual asset profile data."""
+    domain = db.query(Domain).filter(Domain.id == id, Domain.user_id == current_user.id).first()
+    if not domain: raise HTTPException(status_code=404, detail="Domain not found")
+    
+    # Save the entire payload as JSON string
+    domain.manual_data = json.dumps(payload)
+    db.commit()
+    return {"message": "Manual data updated successfully"}
 
 @app.post("/domain/scan/{id}")
 def trigger_scan(id: int, current_user: User = Depends(auth.get_current_user), db: Session = Depends(get_db)):

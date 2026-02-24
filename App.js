@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+// App.js
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import "./App.css";
 
 // ================= HELPER FUNCTIONS =================
@@ -15,6 +16,56 @@ const formatDate = (dateStr) => {
   } catch (e) {
     return "Unknown";
   }
+};
+
+// ================= RISK SCORING ALGORITHM =================
+const calculateRisk = (manualData, sslStatus) => {
+  let score = 0;
+  let riskLevel = "Low";
+  let color = "var(--status-green)";
+
+  const expDate = new Date(manualData.expirationDate || manualData.apiExpiration);
+  const now = new Date();
+  const daysLeft = Math.ceil((expDate - now) / (1000 * 60 * 60 * 24));
+
+  if (daysLeft < 0) {
+    score += 80;
+  } else if (daysLeft < 30) {
+    score += 50;
+  } else if (daysLeft < 90) {
+    score += 20;
+  }
+
+  if (!manualData.autoRenew) {
+    score += 30; 
+  }
+
+  if (manualData.purpose === "production") {
+    score += 10;
+  }
+
+  if (sslStatus !== "Valid") {
+    score += 20;
+  }
+
+  if (manualData.security.mfa) score -= 10;
+  if (manualData.security.lock) score -= 10;
+  if (manualData.security.dnssec) score -= 5;
+
+  score = Math.max(0, Math.min(100, score));
+
+  if (score >= 60) {
+    riskLevel = "Critical";
+    color = "var(--status-red)";
+  } else if (score >= 30) {
+    riskLevel = "Medium";
+    color = "var(--status-orange)";
+  } else {
+    riskLevel = "Low";
+    color = "var(--status-green)";
+  }
+
+  return { score, riskLevel, color };
 };
 
 // ================= PASSWORD MODAL COMPONENT =================
@@ -34,7 +85,6 @@ const PasswordModal = ({ isOpen, onClose, onSubmit, title }) => {
       return;
     }
     onSubmit(pwd);
-    // Reset and close
     setPwd("");
     setConfirm("");
     onClose();
@@ -45,7 +95,7 @@ const PasswordModal = ({ isOpen, onClose, onSubmit, title }) => {
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <h3>{title || "Secure PDF Report"}</h3>
         <p style={{fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "15px"}}>
-          Enter a password to encrypt the PDF. You will need this password to open the file.
+          Enter a password to encrypt the PDF.
         </p>
         <div className="modal-input-group">
           <input 
@@ -98,8 +148,8 @@ const LandingPage = ({ onLogin }) => {
           <br /> Monitoring & Detection
         </h1>
         <p className="hero-subtitle">
-          Track, analyze, and secure your web infrastructure in real-time.
-          Real-time website and system monitoring, plus domain tracking.
+          Automated tracking meets manual asset governance. 
+          Secure your infrastructure with AI-powered scanning and enterprise-grade workflows.
         </p>
         <div className="cta-group">
           <button onClick={onLogin} className="btn-large btn-primary-large">
@@ -116,26 +166,23 @@ const LandingPage = ({ onLogin }) => {
         <div className="cards-grid">
           <div className="feature-card">
             <div className="card-icon">📡</div>
-            <h3>Real-time Tracking</h3>
+            <h3>Auto-Tracking</h3>
             <p>
-              Instant updates on domain status, DNS propagation, and uptime
-              metrics.
+              Instant updates on domain status, DNS propagation, SSL certs, and WHOIS changes via RDAP.
             </p>
           </div>
           <div className="feature-card">
-            <div className="card-icon">⚠️</div>
-            <h3>Threat & Anomaly Detection</h3>
+            <div className="card-icon">📝</div>
+            <h3>Manual Asset Mgmt</h3>
             <p>
-              Identify potential security threats and system anomalies instantly
-              to keep your infrastructure safe.
+              Define ownership, purpose, and infrastructure details for domains that lack public data.
             </p>
           </div>
           <div className="feature-card">
             <div className="card-icon">📊</div>
-            <h3>Detailed Analytics</h3>
+            <h3>Risk Intelligence</h3>
             <p>
-              Visual reports on latency, traffic spikes, and historical
-              performance data.
+              Visual risk scoring based on expiration, compliance checklists, and renewal workflows.
             </p>
           </div>
         </div>
@@ -331,22 +378,27 @@ const ExpiryCountdown = ({ label, dateStr }) => {
   );
 };
 
-const DataDisplayBadge = ({ label, value, isDate = false, icon }) => {
-  if (!value) return <div className="reg-date-badge">N/A</div>;
-  
-  const displayValue = isDate ? formatDate(value) : value;
-
-  return (
-    <div className="reg-date-badge interactive-chip">
-      <span className="reg-label">
-        {icon && <span className="chip-icon">{icon}</span>}
-        {label}
-      </span>
-      <span className="reg-date-text">
-        {displayValue}
-      </span>
-    </div>
-  );
+const DEFAULT_MANUAL_DATA = {
+  registrar: "",
+  regDate: "",
+  expirationDate: "",
+  autoRenew: false,
+  dnsProvider: "",
+  hostingProvider: "",
+  sslProvider: "",
+  purpose: "production",
+  riskLevel: "Medium",
+  primaryOwner: "",
+  backupOwner: "",
+  team: "",
+  department: "",
+  security: {
+    mfa: false,
+    lock: false,
+    dnssec: false,
+    backupContact: false
+  },
+  notes: []
 };
 
 const DomainTrackingComponent = ({ onBack, token }) => {
@@ -358,10 +410,19 @@ const DomainTrackingComponent = ({ onBack, token }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   
+  // UI States
+  const [activeDetailTab, setActiveDetailTab] = useState("overview"); 
+  const [isEditMode, setIsEditMode] = useState(false);
   const [expandedDns, setExpandedDns] = useState({});
-  
-  // NEW: State for Modal
   const [isPwdModalOpen, setIsPwdModalOpen] = useState(false);
+
+  const [domainManualDataMap, setDomainManualDataMap] = useState({});
+
+  // DERIVED STATE
+  const currentManualData = useMemo(() => {
+    if (!selectedDomain) return DEFAULT_MANUAL_DATA;
+    return domainManualDataMap[selectedDomain.domain_name] || DEFAULT_MANUAL_DATA;
+  }, [selectedDomain, domainManualDataMap]);
 
   const fetchDomains = useCallback(async () => {
     try {
@@ -393,18 +454,16 @@ const DomainTrackingComponent = ({ onBack, token }) => {
     return () => clearInterval(interval);
   }, [token, fetchDomains]);
 
-  // UPDATED: Trigger Modal
   const handleGlobalDomainReport = () => {
     setIsPwdModalOpen(true);
   };
 
-  // NEW: Actual Download Function
   const downloadReportWithPassword = async (password) => {
     try {
         const res = await fetch("http://localhost:8000/domain/global-report", {
             method: "POST",
             headers: { "Content-Type": "application/json", 'Authorization': `Bearer ${token}` },
-            body: JSON.stringify({ password: password }) // Send user password
+            body: JSON.stringify({ password: password })
         });
 
         if (!res.ok) throw new Error("Failed to generate report");
@@ -484,6 +543,7 @@ const DomainTrackingComponent = ({ onBack, token }) => {
     }
   };
 
+  // --- UPDATED: handleSelect now loads manual_data from API ---
   const handleSelect = async (domainId) => {
     const domain = domains.find((d) => d.id === domainId);
     setSelectedDomain(domain);
@@ -496,6 +556,31 @@ const DomainTrackingComponent = ({ onBack, token }) => {
       });
       if (!res.ok) throw new Error("Failed to fetch details");
       const data = await res.json();
+      
+      // FIX: Load manual_data from API into local state
+      // If API has manual_data, use it. Otherwise, initialize with defaults and basic API info.
+      if (data.manual_data && Object.keys(data.manual_data).length > 0) {
+          setDomainManualDataMap(prev => ({
+              ...prev,
+              [domain.domain_name]: {
+                  ...DEFAULT_MANUAL_DATA, // Ensure structure exists
+                  ...data.manual_data     // Override with saved values
+              }
+          }));
+      } else {
+          // Legacy support or first time load
+          setDomainManualDataMap(prev => ({
+              ...prev,
+              [domain.domain_name]: {
+                  ...DEFAULT_MANUAL_DATA,
+                  registrar: data.registrar || "",
+                  regDate: data.creation_date || "",
+                  expirationDate: "", 
+                  apiExpiration: data.expiration_date 
+              }
+          }));
+      }
+
       setTimeout(() => setDetailData(data), 100);
     } catch (err) {
       console.error(err);
@@ -526,22 +611,82 @@ const DomainTrackingComponent = ({ onBack, token }) => {
     }
   };
 
-  const getCleanIssuer = (issuer) => {
-    if (!issuer || issuer === "N/A" || issuer === "Unknown") return "Unknown / Not Detected";
-    return issuer;
-  };
-
-  const getDaysRemaining = (dateStr) => {
-    if (!dateStr) return null;
-    const target = new Date(dateStr);
-    const now = new Date();
-    const diff = Math.ceil((target - now) / (1000 * 60 * 60 * 24));
-    return diff;
-  }
-
   const toggleDns = (type) => {
     setExpandedDns(prev => ({ ...prev, [type]: !prev[type] }));
   };
+
+  const updateManualField = (key, value) => {
+    if (!selectedDomain) return;
+    setDomainManualDataMap(prev => ({
+      ...prev,
+      [selectedDomain.domain_name]: {
+        ...(prev[selectedDomain.domain_name] || DEFAULT_MANUAL_DATA),
+        [key]: value
+      }
+    }));
+  };
+
+  const updateSecurityField = (key, value) => {
+    if (!selectedDomain) return;
+    setDomainManualDataMap(prev => ({
+      ...prev,
+      [selectedDomain.domain_name]: {
+        ...(prev[selectedDomain.domain_name] || DEFAULT_MANUAL_DATA),
+        security: {
+          ...(prev[selectedDomain.domain_name]?.security || DEFAULT_MANUAL_DATA.security),
+          [key]: value
+        }
+      }
+    }));
+  };
+
+  // --- UPDATED: saveManualData now sends data to backend ---
+  const saveManualData = async () => {
+    if (!selectedDomain) return;
+    
+    const payload = domainManualDataMap[selectedDomain.domain_name];
+    
+    try {
+        const res = await fetch(`http://localhost:8000/domain/update-manual/${selectedDomain.id}`, {
+            method: "POST",
+            headers: { 
+                "Content-Type": "application/json", 
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || "Failed to save");
+        }
+        
+        setIsEditMode(false);
+        alert("Asset Profile Updated & Saved");
+    } catch (err) {
+        console.error(err);
+        alert("Error saving data: " + err.message);
+        // Keep edit mode on so user can retry
+    }
+  };
+
+  const addNote = () => {
+    const text = prompt("Enter note or audit log entry:");
+    if (text) {
+        setDomainManualDataMap(prev => ({
+            ...prev,
+            [selectedDomain.domain_name]: {
+                ...(prev[selectedDomain.domain_name] || DEFAULT_MANUAL_DATA),
+                notes: [
+                    ...(prev[selectedDomain.domain_name]?.notes || []),
+                    { date: new Date().toISOString(), text }
+                ]
+            }
+        }));
+    }
+  };
+
+  const riskScoreObj = detailData ? calculateRisk(currentManualData, detailData.ssl_status) : { score: 0, riskLevel: "Unknown", color: "gray" };
 
   return (
     <div className="up-dashboard dashboard-atmosphere" style={{ gridTemplateColumns: "350px 1fr" }}>
@@ -551,12 +696,9 @@ const DomainTrackingComponent = ({ onBack, token }) => {
       <aside className="up-sidebar">
         <div className="up-sidebar-header" style={{ flexDirection: "column", alignItems: "flex-start", gap: "10px" }}>
             <div style={{ display: "flex", width: "100%", justifyContent: "space-between", alignItems: "center" }}>
-                <h2 style={{margin: 0}}>Domain Intel</h2>
+                <h2 style={{margin: 0}}>Domain Assets</h2>
                 <div className="up-status-badge live">Live Tracking</div>
             </div>
-            <button onClick={handleGlobalDomainReport} className="up-btn-gray" style={{ width: "100%", fontSize: "0.75rem", padding: "6px" }}>
-                📊 Download Inventory Report
-            </button>
         </div>
 
         <div style={{ marginTop: "20px" }}>
@@ -637,165 +779,458 @@ const DomainTrackingComponent = ({ onBack, token }) => {
           <div className="fade-in-content">
             <header className="up-header">
               <div>
-                <div style={{display: "flex", alignItems: "center", gap: "15px"}}>
-                  <h3 style={{ margin: 0 }}>{detailData.domain_name}</h3>
-                </div>
+                  <div style={{display: "flex", alignItems: "center", gap: "15px"}}>
+                    <h3 style={{ margin: 0 }}>{detailData.domain_name}</h3>
+                    <div style={{
+                        padding: "4px 8px", 
+                        background: "rgba(0,0,0,0.3)", 
+                        border: "1px solid", 
+                        borderColor: riskScoreObj.color,
+                        borderRadius: "4px",
+                        color: riskScoreObj.color,
+                        fontSize: "0.7rem",
+                        fontWeight: "bold",
+                        textTransform: "uppercase"
+                    }}>
+                        Risk: {riskScoreObj.riskLevel}
+                    </div>
+                  </div>
                 <span style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
                   Last Scanned: {new Date(detailData.last_scanned).toLocaleString()}
                 </span>
               </div>
               
-              <button 
-                onClick={handleRescan} 
-                className={`up-btn-blue ${isScanning ? 'scanning-btn' : ''}`} 
-                disabled={isScanning}
-              >
-                {isScanning ? "Scanning..." : "🔄 Refresh Scan"}
-              </button>
+              <div style={{ display: "flex", gap: "10px" }}>
+                <button 
+                    onClick={handleGlobalDomainReport} 
+                    className="up-btn-gray" 
+                    style={{ fontSize: "0.8rem" }}
+                >
+                    📄 Inventory Report
+                </button>
+                <button 
+                    onClick={handleRescan} 
+                    className={`up-btn-blue ${isScanning ? 'scanning-btn' : ''}`} 
+                    disabled={isScanning}
+                >
+                    {isScanning ? "Scanning..." : "🔄 Re-Scan Auto"}
+                </button>
+              </div>
             </header>
 
             {isScanning && <div className="scan-overlay"><div className="scan-line"></div></div>}
 
-            <div className="analytics-grid">
-                <div className="analytics-card glass-card-hover">
-                    <div className="card-header">
-                        <span className="card-icon">🔒</span>
-                        <h4>SSL Certificate</h4>
+            {/* TABS */}
+            <div style={{ display: "flex", gap: "20px", marginBottom: "20px", borderBottom: "1px solid var(--border-color)" }}>
+                {['overview', 'asset', 'security'].map(tab => (
+                    <div 
+                        key={tab}
+                        onClick={() => setActiveDetailTab(tab)}
+                        style={{
+                            padding: "10px 20px",
+                            cursor: "pointer",
+                            textTransform: "uppercase",
+                            fontSize: "0.8rem",
+                            fontWeight: "bold",
+                            color: activeDetailTab === tab ? "var(--status-blue)" : "var(--text-muted)",
+                            borderBottom: activeDetailTab === tab ? "2px solid var(--status-blue)" : "2px solid transparent",
+                            transition: "0.3s"
+                        }}
+                    >
+                        {tab}
                     </div>
-                    <div className="card-body">
-                        <div className="status-row">
-                            <span>Status:</span>
-                            <span className={detailData.ssl_status === 'Valid' ? 'text-green' : 'text-red'}>
-                                {detailData.ssl_status}
-                            </span>
-                        </div>
-                        <div className="status-row">
-                            <span>Issuer:</span>
-                            <span className="text-glow">
-                                {getCleanIssuer(detailData.ssl_issuer)}
-                            </span>
-                        </div>
-                        <div style={{marginTop: "15px"}}>
-                            <ExpiryCountdown label="Expires In" dateStr={detailData.ssl_expires} />
-                        </div>
-                    </div>
-                </div>
+                ))}
+            </div>
 
-                <div className="analytics-card glass-card-hover">
-                    <div className="card-header">
-                        <span className="card-icon">📅</span>
-                        <h4>Domain Registration</h4>
-                    </div>
-                    <div className="card-body">
-                         <DataDisplayBadge label="Registrar" value={detailData.registrar} isDate={false} icon="🏢" />
-                         <DataDisplayBadge label="Registered On" value={detailData.creation_date} isDate={true} icon="🎂" />
-                         <DataDisplayBadge label="Expiration Date" value={detailData.expiration_date} isDate={true} icon="⏳" />
+            {/* TAB CONTENT */}
+            {activeDetailTab === "overview" && (
+                <div className="fade-in-content">
+                    <div className="analytics-grid">
                         
-                        <div style={{marginTop: "10px"}}>
-                             <ExpiryCountdown label="Renew In" dateStr={detailData.expiration_date} />
-                        </div>
-                    </div>
-                </div>
+                        {/* 1. Ownership Card (Manual) */}
+                        {(currentManualData.primaryOwner || currentManualData.department) && (
+                            <div className="analytics-card glass-card-hover" style={{borderTop: "3px solid var(--status-blue)"}}>
+                                <div className="card-header">
+                                    <span className="card-icon">👥</span>
+                                    <h4>Ownership (Manual)</h4>
+                                </div>
+                                <div className="card-body">
+                                    <div className="status-row">
+                                        <span>Primary Owner:</span>
+                                        <span style={{fontWeight:"bold", color:"white"}}>{currentManualData.primaryOwner || "---"}</span>
+                                    </div>
+                                    <div className="status-row">
+                                        <span>Backup Owner:</span>
+                                        <span>{currentManualData.backupOwner || "---"}</span>
+                                    </div>
+                                    <div className="status-row">
+                                        <span>Department:</span>
+                                        <span className="text-glow">{currentManualData.department || "---"}</span>
+                                    </div>
+                                    <div style={{marginTop: "10px", fontSize: "0.7rem", color: "var(--text-muted)"}}>
+                                        * Edit in Asset Profile tab
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
-                <div className="analytics-card glass-card-hover">
-                    <div className="card-header">
-                         <span className="card-icon">🩺</span>
-                        <h4>Health Checklist</h4>
-                    </div>
-                    <div className="card-body" style={{flexDirection: "column", gap: "12px"}}>
-                        <div className="health-item interactive-item">
-                            <span className="health-icon">
-                                {detailData.ssl_status === 'Valid' ? '✅' : '⛔'}
-                            </span>
-                            <div className="health-text">
-                                <strong>SSL Valid</strong>
-                                <div style={{fontSize: "0.75rem", color: "var(--text-muted)"}}>
-                                    {detailData.ssl_status === 'Valid' ? 'Certificate is trusted' : 'Invalid or missing cert'}
+                        {/* 2. SSL Status (Auto) */}
+                        <div className="analytics-card glass-card-hover">
+                            <div className="card-header">
+                                <span className="card-icon">🔒</span>
+                                <h4>SSL Certificate (Auto)</h4>
+                            </div>
+                            <div className="card-body">
+                                <div className="status-row">
+                                    <span>Status:</span>
+                                    <span className={detailData.ssl_status === 'Valid' ? 'text-green' : 'text-red'}>
+                                        {detailData.ssl_status}
+                                    </span>
+                                </div>
+                                <div className="status-row">
+                                    <span>Issuer:</span>
+                                    <span className="text-glow">
+                                        {detailData.ssl_issuer || "Unknown"}
+                                    </span>
+                                </div>
+                                <div style={{marginTop: "15px"}}>
+                                    <ExpiryCountdown label="Expires In" dateStr={detailData.ssl_expires} />
                                 </div>
                             </div>
                         </div>
 
-                        <div className="health-item interactive-item">
-                            {(() => {
-                                const days = getDaysRemaining(detailData.expiration_date);
-                                let icon = '✅';
-                                let text = 'Safe for renewal';
-                                if (days <= 30 && days > 0) { icon = '⚠️'; text = 'Expiring soon'; }
-                                else if (days <= 0) { icon = '⛔'; text = 'Expired'; }
-                                
-                                return (
-                                    <>
-                                        <span className="health-icon">{icon}</span>
-                                        <div className="health-text">
-                                            <strong>Domain Expiry</strong>
-                                            <div style={{fontSize: "0.75rem", color: "var(--text-muted)"}}>
-                                                {text}
-                                            </div>
+                         {/* 3. Infrastructure Providers (Manual) */}
+                         {(currentManualData.hostingProvider || currentManualData.dnsProvider) && (
+                            <div className="analytics-card glass-card-hover" style={{borderTop: "3px solid var(--status-blue)"}}>
+                                <div className="card-header">
+                                    <span className="card-icon">🏢</span>
+                                    <h4>Providers (Manual)</h4>
+                                </div>
+                                <div className="card-body">
+                                    <div className="status-row">
+                                        <span>DNS:</span>
+                                        <span style={{fontWeight:"bold"}}>{currentManualData.dnsProvider || "---"}</span>
+                                    </div>
+                                    <div className="status-row">
+                                        <span>Hosting:</span>
+                                        <span style={{fontWeight:"bold"}}>{currentManualData.hostingProvider || "---"}</span>
+                                    </div>
+                                    <div className="status-row">
+                                        <span>SSL:</span>
+                                        <span>{currentManualData.sslProvider || "---"}</span>
+                                    </div>
+                                    <div style={{marginTop: "10px", fontSize: "0.7rem", color: "var(--text-muted)"}}>
+                                        * Edit in Asset Profile tab
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 4. Lifecycle Dates (Hybrid) */}
+                        <div className="analytics-card glass-card-hover">
+                            <div className="card-header">
+                                <span className="card-icon">📅</span>
+                                <h4>Domain Lifecycle</h4>
+                            </div>
+                            <div className="card-body">
+                                <div className="status-row">
+                                    <span>Expires:</span>
+                                    <span style={{
+                                        color: currentManualData.expirationDate ? "var(--status-blue)" : "var(--text-muted)",
+                                        fontWeight: currentManualData.expirationDate ? "bold" : "normal"
+                                    }}>
+                                        {currentManualData.expirationDate ? formatDate(currentManualData.expirationDate) : (detailData.expiration_date ? formatDate(detailData.expiration_date) : "Unknown")}
+                                    </span>
+                                </div>
+                                {currentManualData.expirationDate && (
+                                    <div style={{fontSize: "0.7rem", color: "var(--status-orange)", marginBottom: "5px"}}>
+                                        Manual Override Set
+                                    </div>
+                                )}
+                                <div className="status-row">
+                                    <span>Purpose:</span>
+                                    <span style={{
+                                        background: "rgba(6, 182, 212, 0.1)", 
+                                        padding: "2px 8px", 
+                                        borderRadius: "4px",
+                                        textTransform: "uppercase",
+                                        fontSize: "0.75rem",
+                                        fontWeight: "bold"
+                                    }}>
+                                        {currentManualData.purpose}
+                                    </span>
+                                </div>
+                                <div style={{marginTop: "15px"}}>
+                                    <ExpiryCountdown label="Renewal In" dateStr={currentManualData.expirationDate || detailData.expiration_date} />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 5. Quick Health (Auto) */}
+                        <div className="analytics-card glass-card-hover">
+                             <div className="card-header">
+                                <span className="card-icon">🩺</span>
+                                <h4>Quick Health</h4>
+                            </div>
+                            <div className="card-body" style={{flexDirection: "column", gap: "12px"}}>
+                                <div className="health-item interactive-item">
+                                    <span className="health-icon">{detailData.ssl_status === 'Valid' ? '✅' : '⛔'}</span>
+                                    <div className="health-text"><strong>SSL Valid</strong></div>
+                                </div>
+                                <div className="health-item interactive-item">
+                                    <span className="health-icon">{detailData.dns_records?.A?.length ? '✅' : '⚠️'}</span>
+                                    <div className="health-text"><strong>DNS Resolution</strong></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="up-widget glass-widget" style={{marginTop: "20px"}}>
+                      <h4>DNS Infrastructure (Auto)</h4>
+                      {detailData.dns_records && Object.keys(detailData.dns_records).length > 0 ? (
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: "15px" }}>
+                          {Object.entries(detailData.dns_records).map(([type, records]) => (
+                            records.length > 0 && (
+                              <div key={type} className="dns-box interactive-dns-box">
+                                <div className="dns-type">{type} Records ({records.length})</div>
+                                <div className="dns-list">
+                                    {records.slice(0, expandedDns[type] ? records.length : 3).map((rec, i) => (
+                                        <div key={i} className="dns-item interactive-dns-item">{rec}</div>
+                                    ))}
+                                    {records.length > 3 && (
+                                        <div className="dns-more-btn" onClick={() => toggleDns(type)}>
+                                            {expandedDns[type] ? `Show less` : `+ ${records.length - 3} more`}
                                         </div>
-                                    </>
-                                )
-                            })()}
+                                    )}
+                                </div>
+                              </div>
+                            )
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="up-empty-state">No DNS records detected.</div>
+                      )}
+                    </div>
+                </div>
+            )}
+
+            {activeDetailTab === "asset" && (
+                <div className="fade-in-content" style={{ display: "flex", gap: "20px", flexDirection: "column" }}>
+                    <div className="up-widget glass-widget">
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+                            <h4 style={{ margin: 0 }}>Manual Asset Profile</h4>
+                            <button onClick={() => setIsEditMode(!isEditMode)} className="up-btn-blue" style={{ fontSize: "0.7rem", padding: "5px 15px" }}>
+                                {isEditMode ? "Cancel" : "Edit Profile"}
+                            </button>
                         </div>
 
-                        <div className="health-item interactive-item">
-                             <span className="health-icon">
-                                {detailData.dns_records && detailData.dns_records['A'] && detailData.dns_records['A'].length > 0 ? '✅' : '⚠️'}
-                            </span>
-                            <div className="health-text">
-                                <strong>DNS Resolution</strong>
-                                <div style={{fontSize: "0.75rem", color: "var(--text-muted)"}}>
-                                    {detailData.dns_records && detailData.dns_records['A'] && detailData.dns_records['A'].length > 0 
-                                        ? 'A Records found' : 'No A Records detected'}
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "20px" }}>
+                            {/* Ownership */}
+                            <div className="form-section">
+                                <h5 style={{ color: "var(--status-blue)", marginBottom: "10px", textTransform: "uppercase", fontSize: "0.8rem" }}>Ownership & Team</h5>
+                                <div className="status-row">
+                                    <label>Primary Owner</label>
+                                    <input 
+                                        type="text" 
+                                        value={currentManualData.primaryOwner} 
+                                        onChange={(e) => updateManualField('primaryOwner', e.target.value)}
+                                        disabled={!isEditMode}
+                                        style={!isEditMode ? { background: "transparent", border: "none", color: "white", textAlign: "right", width: "60%" } : {}}
+                                    />
+                                </div>
+                                <div className="status-row">
+                                    <label>Backup Owner</label>
+                                    <input 
+                                        type="text" 
+                                        value={currentManualData.backupOwner} 
+                                        onChange={(e) => updateManualField('backupOwner', e.target.value)}
+                                        disabled={!isEditMode}
+                                        style={!isEditMode ? { background: "transparent", border: "none", color: "white", textAlign: "right", width: "60%" } : {}}
+                                    />
+                                </div>
+                                <div className="status-row">
+                                    <label>Department</label>
+                                    <input 
+                                        type="text" 
+                                        value={currentManualData.department} 
+                                        onChange={(e) => updateManualField('department', e.target.value)}
+                                        disabled={!isEditMode}
+                                        style={!isEditMode ? { background: "transparent", border: "none", color: "white", textAlign: "right", width: "60%" } : {}}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Infrastructure */}
+                            <div className="form-section">
+                                <h5 style={{ color: "var(--status-blue)", marginBottom: "10px", textTransform: "uppercase", fontSize: "0.8rem" }}>Infrastructure Providers</h5>
+                                <div className="status-row">
+                                    <label>DNS Provider</label>
+                                    <input 
+                                        type="text" 
+                                        value={currentManualData.dnsProvider} 
+                                        onChange={(e) => updateManualField('dnsProvider', e.target.value)}
+                                        disabled={!isEditMode}
+                                        style={!isEditMode ? { background: "transparent", border: "none", color: "white", textAlign: "right", width: "60%" } : {}}
+                                    />
+                                </div>
+                                <div className="status-row">
+                                    <label>Hosting Provider</label>
+                                    <input 
+                                        type="text" 
+                                        value={currentManualData.hostingProvider} 
+                                        onChange={(e) => updateManualField('hostingProvider', e.target.value)}
+                                        disabled={!isEditMode}
+                                        style={!isEditMode ? { background: "transparent", border: "none", color: "white", textAlign: "right", width: "60%" } : {}}
+                                    />
+                                </div>
+                                <div className="status-row">
+                                    <label>SSL Provider</label>
+                                    <input 
+                                        type="text" 
+                                        value={currentManualData.sslProvider} 
+                                        onChange={(e) => updateManualField('sslProvider', e.target.value)}
+                                        disabled={!isEditMode}
+                                        style={!isEditMode ? { background: "transparent", border: "none", color: "white", textAlign: "right", width: "60%" } : {}}
+                                    />
+                                </div>
+                            </div>
+
+                             {/* Dates & Purpose */}
+                             <div className="form-section">
+                                <h5 style={{ color: "var(--status-blue)", marginBottom: "10px", textTransform: "uppercase", fontSize: "0.8rem" }}>Lifecycle & Purpose</h5>
+                                <div className="status-row">
+                                    <label>Purpose</label>
+                                    <select 
+                                        value={currentManualData.purpose} 
+                                        onChange={(e) => updateManualField('purpose', e.target.value)}
+                                        disabled={!isEditMode}
+                                        style={isEditMode ? { width: "60%", background: "var(--bg-dark)", color: "white", border: "1px solid var(--border-color)" } : { background: "transparent", border: "none", color: "white", textAlign: "right", width: "60%" }}
+                                    >
+                                        <option value="production">Production</option>
+                                        <option value="staging">Staging</option>
+                                        <option value="test">Test</option>
+                                        <option value="internal">Internal</option>
+                                    </select>
+                                </div>
+                                <div className="status-row">
+                                    <label>Manual Exp. Date</label>
+                                    <input 
+                                        type="date" 
+                                        value={currentManualData.expirationDate} 
+                                        onChange={(e) => updateManualField('expirationDate', e.target.value)}
+                                        disabled={!isEditMode}
+                                        style={isEditMode ? { width: "60%", background: "var(--bg-dark)", color: "white", border: "1px solid var(--border-color)" } : { background: "transparent", border: "none", color: "white", textAlign: "right", width: "60%" }}
+                                    />
+                                </div>
+                                <div className="status-row">
+                                    <label>Auto-Renew</label>
+                                    <input 
+                                        type="checkbox" 
+                                        checked={currentManualData.autoRenew}
+                                        onChange={(e) => updateManualField('autoRenew', e.target.checked)}
+                                        disabled={!isEditMode}
+                                    />
                                 </div>
                             </div>
                         </div>
+                        {isEditMode && (
+                            <div style={{ marginTop: "20px", textAlign: "right" }}>
+                                <button onClick={saveManualData} className="up-btn-green">Save Changes</button>
+                            </div>
+                        )}
                     </div>
                 </div>
-            </div>
+            )}
 
-            <div className="up-widget glass-widget" style={{marginTop: "20px"}}>
-              <h4>DNS Infrastructure</h4>
-              {detailData.dns_records && Object.keys(detailData.dns_records).length > 0 ? (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: "15px" }}>
-                  {Object.entries(detailData.dns_records).map(([type, records]) => (
-                    records.length > 0 && (
-                      <div key={type} className="dns-box interactive-dns-box">
-                        <div className="dns-type">{type} Records ({records.length})</div>
-                        <div className="dns-list">
-                            {records.slice(0, expandedDns[type] ? records.length : 3).map((rec, i) => (
-                                <div key={i} className="dns-item interactive-dns-item">{rec}</div>
-                            ))}
-                            {records.length > 3 && (
-                                <div 
-                                    className="dns-more-btn" 
-                                    onClick={() => toggleDns(type)}
-                                >
-                                    {expandedDns[type] ? `Show less` : `+ ${records.length - 3} more`}
+            {activeDetailTab === "security" && (
+                <div className="fade-in-content">
+                    <div className="analytics-grid">
+                        {/* Risk Score */}
+                        <div className="analytics-card glass-card-hover" style={{ gridRow: "span 2" }}>
+                             <div className="card-header">
+                                <span className="card-icon">📊</span>
+                                <h4>Calculated Risk Score</h4>
+                            </div>
+                            <div style={{ textAlign: "center", padding: "20px" }}>
+                                <div style={{ 
+                                    width: "150px", 
+                                    height: "150px", 
+                                    borderRadius: "50%", 
+                                    border: `10px solid ${riskScoreObj.color}`, 
+                                    display: "flex", 
+                                    alignItems: "center", 
+                                    justifyContent: "center", 
+                                    margin: "0 auto 20px",
+                                    position: "relative",
+                                    boxShadow: `0 0 30px ${riskScoreObj.color}40`
+                                }}>
+                                    <div>
+                                        <div style={{ fontSize: "2.5rem", fontWeight: "bold", color: "white" }}>{riskScoreObj.score}</div>
+                                        <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>/ 100</div>
+                                    </div>
                                 </div>
-                            )}
+                                <div style={{ fontSize: "1.2rem", color: riskScoreObj.color, fontWeight: "bold", textTransform: "uppercase" }}>
+                                    {riskScoreObj.riskLevel} RISK
+                                </div>
+                            </div>
                         </div>
-                      </div>
-                    )
-                  ))}
+
+                        {/* Security Checklist */}
+                        <div className="analytics-card glass-card-hover">
+                             <div className="card-header">
+                                <span className="card-icon">🔐</span>
+                                <h4>Security Checklist</h4>
+                            </div>
+                            <div className="card-body" style={{ flexDirection: "column", gap: "10px" }}>
+                                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
+                                    <input type="checkbox" checked={currentManualData.security.mfa} onChange={(e) => updateSecurityField('mfa', e.target.checked)} />
+                                    <span>MFA Enabled on Registrar</span>
+                                </label>
+                                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
+                                    <input type="checkbox" checked={currentManualData.security.lock} onChange={(e) => updateSecurityField('lock', e.target.checked)} />
+                                    <span>Registrar Lock Active</span>
+                                </label>
+                                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
+                                    <input type="checkbox" checked={currentManualData.security.dnssec} onChange={(e) => updateSecurityField('dnssec', e.target.checked)} />
+                                    <span>DNSSEC Enabled</span>
+                                </label>
+                                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
+                                    <input type="checkbox" checked={currentManualData.security.backupContact} onChange={(e) => updateSecurityField('backupContact', e.target.checked)} />
+                                    <span>Backup Contact Verified</span>
+                                </label>
+                            </div>
+                        </div>
+
+                         {/* Audit / Notes */}
+                        <div className="analytics-card glass-card-hover">
+                             <div className="card-header">
+                                <span className="card-icon">📝</span>
+                                <h4>Audit & Workflow Log</h4>
+                            </div>
+                            <div style={{ maxHeight: "150px", overflowY: "auto", marginBottom: "10px" }}>
+                                {currentManualData.notes.length > 0 ? currentManualData.notes.map((note, i) => (
+                                    <div key={i} style={{ fontSize: "0.75rem", marginBottom: "8px", borderBottom: "1px dashed var(--border-color)", paddingBottom: "5px" }}>
+                                        <div style={{ color: "var(--status-blue)", fontSize: "0.7rem" }}>{formatDate(note.date)}</div>
+                                        <div>{note.text}</div>
+                                    </div>
+                                )) : <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>No notes yet.</div>}
+                            </div>
+                            <button onClick={addNote} className="up-btn-gray" style={{ fontSize: "0.7rem", width: "100%" }}>+ Add Note / Action</button>
+                        </div>
+                    </div>
                 </div>
-              ) : (
-                <div className="up-empty-state">
-                  No DNS records detected.
-                </div>
-              )}
-            </div>
+            )}
 
           </div>
         ) : (
           <div className="up-empty-state fade-in-content">
             <div style={{fontSize: "3rem", marginBottom: "20px"}}>🔍</div>
             <h3>Select a domain</h3>
-            <p>Choose a domain from sidebar to view detailed analytics.</p>
+            <p>Choose a domain from sidebar to view detailed analytics, asset management, and risk scoring.</p>
           </div>
         )}
       </main>
       
-      {/* RENDER MODAL */}
       <PasswordModal 
         isOpen={isPwdModalOpen} 
         onClose={() => setIsPwdModalOpen(false)} 
@@ -820,7 +1255,6 @@ const MonitoringComponent = ({ onBack, token }) => {
   
   const [selectedMonitor, setSelectedMonitor] = useState(null);
   
-  // NEW: State for Modal
   const [isPwdModalOpen, setIsPwdModalOpen] = useState(false);
 
   const [data, setData] = useState({
@@ -844,7 +1278,6 @@ const MonitoringComponent = ({ onBack, token }) => {
     return backendDown;
   };
 
-  // Sync Backend State
   useEffect(() => {
       const syncBackendState = async () => {
           try {
@@ -891,18 +1324,16 @@ const MonitoringComponent = ({ onBack, token }) => {
     return () => clearInterval(interval);
   }, [isMonitoring, token]);
 
-  // UPDATED: Trigger Modal
   const handleGlobalMonitoringReport = () => {
     setIsPwdModalOpen(true);
   };
 
-  // NEW: Actual Download Function
   const downloadReportWithPassword = async (password) => {
     try {
         const res = await fetch("http://localhost:8000/monitoring/global-report", {
             method: "POST",
             headers: { "Content-Type": "application/json", 'Authorization': `Bearer ${token}` },
-            body: JSON.stringify({ password: password }) // Send user password
+            body: JSON.stringify({ password: password })
         });
 
         if (!res.ok) throw new Error("Failed to generate report");
@@ -1005,7 +1436,6 @@ const MonitoringComponent = ({ onBack, token }) => {
     });
   };
 
-  // ================= MONITOR DETAIL SUB-COMPONENT =================
   const MonitorDetailView = ({ target }) => {
       const history = data.histories[target] || [];
       const status = data.status_messages[target] || "Idle";
@@ -1053,7 +1483,6 @@ const MonitoringComponent = ({ onBack, token }) => {
                   </div>
               </div>
 
-              {/* Response Time Stats */}
               <div className="analytics-grid" style={{marginTop: "20px"}}>
                   <div className="analytics-card glass-card-hover" style={{gridColumn: "span 3"}}>
                       <div className="card-header">
@@ -1077,7 +1506,6 @@ const MonitoringComponent = ({ onBack, token }) => {
                   </div>
               </div>
 
-              {/* Uptime Grid */}
               <div className="analytics-grid" style={{marginTop: "20px", gridTemplateColumns: "repeat(4, 1fr)"}}>
                   <div className="analytics-card glass-card-hover">
                       <h4 style={{margin: "0 0 10px 0", fontSize: "0.9rem", color: "var(--text-muted)"}}>Current Session</h4>
@@ -1109,7 +1537,6 @@ const MonitoringComponent = ({ onBack, token }) => {
                   </div>
               </div>
 
-              {/* Large Chart */}
               <div className="up-widget glass-widget" style={{marginTop: "20px"}}>
                   <div className="card-header">
                       <h4>Response Time History</h4>
@@ -1120,7 +1547,6 @@ const MonitoringComponent = ({ onBack, token }) => {
                   </div>
               </div>
 
-              {/* Latest Incidents */}
               <div className="up-widget glass-widget" style={{marginTop: "20px"}}>
                   <h4>Latest Incidents</h4>
                   {down ? (
@@ -1519,7 +1945,6 @@ const MonitoringComponent = ({ onBack, token }) => {
         </aside>
       )}
 
-      {/* RENDER MODAL */}
       <PasswordModal 
         isOpen={isPwdModalOpen} 
         onClose={() => setIsPwdModalOpen(false)} 
