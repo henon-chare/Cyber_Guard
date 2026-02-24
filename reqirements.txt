@@ -1,3 +1,10 @@
-pip install "python-jose[cryptography]" "passlib[bcrypt]" python-multipart
-pip install weasyprint pypdf
-
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic[email]
+python-jose[cryptography]
+passlib[bcrypt]
+python-dotenv
+fastapi-mail
+python-multipart
+weasyprint
