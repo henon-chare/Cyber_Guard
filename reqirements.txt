@@ -1,0 +1,3 @@
+pip install "python-jose[cryptography]" "passlib[bcrypt]" python-multipart
+pip install weasyprint pypdf
+

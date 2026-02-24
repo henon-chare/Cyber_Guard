@@ -1,13 +1,19 @@
 # database.py
+import os
+from dotenv import load_dotenv  # Import this
+
+# Load environment variables from .env file
+load_dotenv()
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-# URL encode the dot in the password
-DATABASE_URL = "postgresql+psycopg2://postgres:bdupassword%2E@localhost:5432/postgres"
+# Use os.getenv to get the URL safely
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 engine = create_engine(
     DATABASE_URL,
-    echo=True,          # show SQL queries in terminal
+    echo=True,
     pool_pre_ping=True
 )
 
