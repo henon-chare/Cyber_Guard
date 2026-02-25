@@ -738,22 +738,38 @@ const DomainTrackingComponent = ({ onBack, token, username }) => {
 
   const updateSecurityField = (key, value) => {
     if (!selectedDomain) return;
+    
+    // Construct the new data structure manually to ensure we have it for the API call immediately
+    const domainName = selectedDomain.domain_name;
+    const prevData = domainManualDataMap[domainName] || DEFAULT_MANUAL_DATA;
+    
+    const newSecurity = {
+        ...(prevData.security || DEFAULT_MANUAL_DATA.security),
+        [key]: value
+    };
+
+    const newManualData = {
+        ...prevData,
+        security: newSecurity
+    };
+
+    // Update UI State
     setDomainManualDataMap(prev => ({
       ...prev,
-      [selectedDomain.domain_name]: {
-        ...(prev[selectedDomain.domain_name] || DEFAULT_MANUAL_DATA),
-        security: {
-          ...(prev[selectedDomain.domain_name]?.security || DEFAULT_MANUAL_DATA.security),
-          [key]: value
-        }
-      }
+      [domainName]: newManualData
     }));
+
+    // AUTO-SAVE: Save immediately to prevent loss on navigation
+    // We pass 'true' for silent mode so it doesn't alert on every click
+    saveManualData(true, newManualData);
   };
 
-  const saveManualData = async () => {
+  // UPDATED: Added 'isSilent' and 'manualPayload' params to handle auto-save correctly
+  const saveManualData = async (isSilent = false, manualPayload = null) => {
     if (!selectedDomain) return;
     
-    const payload = domainManualDataMap[selectedDomain.domain_name];
+    // Use passed payload (for auto-save) or derive from state (for manual save button)
+    const payload = manualPayload || domainManualDataMap[selectedDomain.domain_name];
     
     try {
         const res = await fetch(`http://localhost:8000/domain/update-manual/${selectedDomain.id}`, {
@@ -770,27 +786,43 @@ const DomainTrackingComponent = ({ onBack, token, username }) => {
             throw new Error(errData.detail || "Failed to save");
         }
         
-        setIsEditMode(false);
-        alert("Asset Profile Updated & Saved");
+        // Only show success message/alert if not a silent auto-save
+        if (!isSilent) {
+            setIsEditMode(false);
+            alert("Asset Profile Updated & Saved");
+        }
     } catch (err) {
         console.error(err);
-        alert("Error saving data: " + err.message);
+        if (!isSilent) {
+            alert("Error saving data: " + err.message);
+        } else {
+            console.warn("Silent auto-save failed:", err.message);
+        }
     }
   };
 
   const addNote = () => {
     const text = prompt("Enter note or audit log entry:");
     if (text) {
+        const domainName = selectedDomain.domain_name;
+        const prevData = domainManualDataMap[domainName] || DEFAULT_MANUAL_DATA;
+        const newNotes = [
+            ...(prevData.notes || []),
+            { date: new Date().toISOString(), text }
+        ];
+        
+        const newManualData = {
+            ...prevData,
+            notes: newNotes
+        };
+
         setDomainManualDataMap(prev => ({
             ...prev,
-            [selectedDomain.domain_name]: {
-                ...(prev[selectedDomain.domain_name] || DEFAULT_MANUAL_DATA),
-                notes: [
-                    ...(prev[selectedDomain.domain_name]?.notes || []),
-                    { date: new Date().toISOString(), text }
-                ]
-            }
+            [domainName]: newManualData
         }));
+
+        // AUTO-SAVE: Save note immediately
+        saveManualData(true, newManualData);
     }
   };
 
@@ -1245,7 +1277,7 @@ const DomainTrackingComponent = ({ onBack, token, username }) => {
                         </div>
                         {isEditMode && (
                             <div style={{ marginTop: "20px", textAlign: "right" }}>
-                                <button onClick={saveManualData} className="up-btn-green">Save Changes</button>
+                                <button onClick={() => saveManualData(false)} className="up-btn-green">Save Changes</button>
                             </div>
                         )}
                     </div>
