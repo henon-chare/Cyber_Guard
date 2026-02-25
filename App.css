@@ -186,6 +186,18 @@ body {
   letter-spacing: 1px;
 }
 
+/* NEW: Error Message Styling */
+.modal-error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid var(--status-red);
+  color: var(--status-red);
+  padding: 10px;
+  margin-bottom: 15px;
+  font-size: 0.85rem;
+  border-radius: 2px;
+  text-align: center;
+}
+
 .modal-input-group {
   display: flex;
   flex-direction: column;
@@ -207,6 +219,11 @@ body {
 .modal-input-group input:focus {
   border-color: var(--status-blue);
   outline: none;
+}
+
+.modal-input-group input.input-error {
+  border-color: var(--status-red);
+  color: var(--status-red);
 }
 
 .modal-actions {

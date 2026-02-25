@@ -18,6 +18,20 @@ const formatDate = (dateStr) => {
   }
 };
 
+// PASSWORD VALIDATION HELPER (Mirrors Backend)
+const validateReportPassword = (password, username) => {
+  if (!password) return { valid: false, msg: "Password cannot be empty." };
+  if (password.length < 8) return { valid: false, msg: "Password too short (min 8 chars)." };
+  if (username && password.toLowerCase().includes(username.toLowerCase())) {
+    return { valid: false, msg: "Password too similar to username." };
+  }
+  if (!/[A-Z]/.test(password)) return { valid: false, msg: "Password must contain uppercase." };
+  if (!/[a-z]/.test(password)) return { valid: false, msg: "Password must contain lowercase." };
+  if (!/\d/.test(password)) return { valid: false, msg: "Password must contain a number." };
+  if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) return { valid: false, msg: "Password must contain a special character." };
+  return { valid: true, msg: "" };
+};
+
 // ================= RISK SCORING ALGORITHM =================
 const calculateRisk = (manualData, sslStatus) => {
   let score = 0;
@@ -69,24 +83,38 @@ const calculateRisk = (manualData, sslStatus) => {
 };
 
 // ================= PASSWORD MODAL COMPONENT =================
-const PasswordModal = ({ isOpen, onClose, onSubmit, title }) => {
+// UPDATED: Added username prop and validation logic
+const PasswordModal = ({ isOpen, onClose, onSubmit, title, username }) => {
   const [pwd, setPwd] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  // Clear error when password changes
+  useEffect(() => {
+    if (errorMsg) setErrorMsg("");
+  }, [pwd, confirm, errorMsg]);
 
   if (!isOpen) return null;
 
   const handleSubmit = () => {
-    if (!pwd) {
-      alert("Password cannot be empty.");
-      return;
-    }
+    // 1. Check Match
     if (pwd !== confirm) {
-      alert("Passwords do not match!");
+      setErrorMsg("Passwords do not match!");
       return;
     }
+
+    // 2. Check Strength
+    const strengthCheck = validateReportPassword(pwd, username);
+    if (!strengthCheck.valid) {
+      setErrorMsg(strengthCheck.msg);
+      return;
+    }
+
+    // 3. Submit
     onSubmit(pwd);
     setPwd("");
     setConfirm("");
+    setErrorMsg("");
     onClose();
   };
 
@@ -95,8 +123,15 @@ const PasswordModal = ({ isOpen, onClose, onSubmit, title }) => {
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <h3>{title || "Secure PDF Report"}</h3>
         <p style={{fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "15px"}}>
-          Enter a password to encrypt the PDF.
+          Enter a strong password to encrypt the PDF.
         </p>
+        
+        {errorMsg && (
+          <div className="modal-error">
+            ⚠️ {errorMsg}
+          </div>
+        )}
+
         <div className="modal-input-group">
           <input 
             type="password" 
@@ -104,12 +139,14 @@ const PasswordModal = ({ isOpen, onClose, onSubmit, title }) => {
             value={pwd} 
             onChange={(e) => setPwd(e.target.value)} 
             autoFocus
+            className={errorMsg ? "input-error" : ""}
           />
           <input 
             type="password" 
             placeholder="Confirm Password" 
             value={confirm} 
             onChange={(e) => setConfirm(e.target.value)} 
+            className={errorMsg ? "input-error" : ""}
           />
         </div>
         <div className="modal-actions">
@@ -469,7 +506,8 @@ const DEFAULT_MANUAL_DATA = {
   notes: []
 };
 
-const DomainTrackingComponent = ({ onBack, token }) => {
+// UPDATED: Accepts username prop
+const DomainTrackingComponent = ({ onBack, token, username }) => {
   const [domains, setDomains] = useState([]);
   const [selectedDomain, setSelectedDomain] = useState(null);
   const [detailData, setDetailData] = useState(null);
@@ -539,7 +577,10 @@ const DomainTrackingComponent = ({ onBack, token }) => {
             body: JSON.stringify({ password: password })
         });
 
-        if (!res.ok) throw new Error("Failed to generate report");
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            throw new Error(errorData.detail || "Failed to generate report");
+        }
 
         const blob = await res.blob();
         const url = window.URL.createObjectURL(blob);
@@ -551,7 +592,7 @@ const DomainTrackingComponent = ({ onBack, token }) => {
         a.remove();
     } catch (err) {
         console.error(err);
-        alert("Error generating report");
+        alert("Error generating report: " + err.message);
     }
   };
 
@@ -1300,18 +1341,21 @@ const DomainTrackingComponent = ({ onBack, token }) => {
         )}
       </main>
       
+      {/* UPDATED: Pass username to modal */}
       <PasswordModal 
         isOpen={isPwdModalOpen} 
         onClose={() => setIsPwdModalOpen(false)} 
         onSubmit={downloadReportWithPassword}
         title="Secure Domain Report"
+        username={username}
       />
     </div>
   );
 };
 
 // ================= MONITORING COMPONENT =================
-const MonitoringComponent = ({ onBack, token }) => {
+// UPDATED: Accepts username prop
+const MonitoringComponent = ({ onBack, token, username }) => {
   const [url, setUrl] = useState("");
   const [lastStartedUrl, setLastStartedUrl] = useState("");
   
@@ -1405,7 +1449,10 @@ const MonitoringComponent = ({ onBack, token }) => {
             body: JSON.stringify({ password: password })
         });
 
-        if (!res.ok) throw new Error("Failed to generate report");
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            throw new Error(errorData.detail || "Failed to generate report");
+        }
 
         const blob = await res.blob();
         const url = window.URL.createObjectURL(blob);
@@ -1417,7 +1464,7 @@ const MonitoringComponent = ({ onBack, token }) => {
         a.remove();
     } catch (err) {
         console.error(err);
-        alert("Error generating report");
+        alert("Error generating report: " + err.message);
     }
   };
 
@@ -2014,11 +2061,13 @@ const MonitoringComponent = ({ onBack, token }) => {
         </aside>
       )}
 
+      {/* UPDATED: Pass username to modal */}
       <PasswordModal 
         isOpen={isPwdModalOpen} 
         onClose={() => setIsPwdModalOpen(false)} 
         onSubmit={downloadReportWithPassword}
         title="Secure Monitoring Report"
+        username={username}
       />
     </div>
   );
@@ -2136,10 +2185,12 @@ function App() {
 
   const HomePage = () => {
     if (selectedCard === "monitoring") {
-      return <MonitoringComponent onBack={() => setSelectedCard(null)} token={authToken} />;
+      // UPDATED: Pass username to child
+      return <MonitoringComponent onBack={() => setSelectedCard(null)} token={authToken} username={formData.username} />;
     }
     if (selectedCard === "domains") {
-      return <DomainTrackingComponent onBack={() => setSelectedCard(null)} token={authToken} />;
+      // UPDATED: Pass username to child
+      return <DomainTrackingComponent onBack={() => setSelectedCard(null)} token={authToken} username={formData.username} />;
     }
     return (
       <div className="dashboard">

@@ -317,6 +317,11 @@ def generate_global_monitoring_pdf(password: str, state_data: dict):
 
 @app.post("/monitoring/global-report")
 async def download_global_monitoring_report(data: GlobalReportRequest, current_user: User = Depends(auth.get_current_user)):
+    # VALIDATION: Check password strength before generating
+    is_strong, msg = auth.validate_password(data.password, current_user.username)
+    if not is_strong:
+        raise HTTPException(status_code=400, detail=f"Weak Password: {msg}")
+
     try:
         state_data = {
             "targets": list(state.targets),
@@ -486,6 +491,11 @@ async def download_single_domain_report(
     current_user: User = Depends(auth.get_current_user), 
     db: Session = Depends(get_db)
 ):
+    # VALIDATION: Check password strength before generating
+    is_strong, msg = auth.validate_password(data.password, current_user.username)
+    if not is_strong:
+        raise HTTPException(status_code=400, detail=f"Weak Password: {msg}")
+
     try:
         pdf_buffer = generate_single_domain_pdf(id, db, data.password)
         return StreamingResponse(pdf_buffer, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=domain_report_{datetime.now().strftime('%Y%m%d')}.pdf"})
