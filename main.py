@@ -4,7 +4,7 @@ import shlex
 import sys
 import json
 import socket
-import ssl
+import ssl  # Native SSL library
 import re
 import asyncio
 import time
@@ -29,7 +29,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak, KeepTogether
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY, TA_RIGHT # FIXED: Added TA_RIGHT
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY, TA_RIGHT
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.pdfencrypt import StandardEncryption
@@ -125,9 +125,9 @@ def read_root():
 # ================= GLOBAL REPORT GENERATION (MONITORING) =================
 
 # --- Custom Colors ---
-PDF_TITLE_COLOR = colors.HexColor("#0f172a") # Slate 900
-PDF_TEXT_COLOR = colors.HexColor("#1f2937")  # Slate 800 (Dark Gray)
-PDF_MUTED_COLOR = colors.HexColor("#4b5563") # Gray 600
+PDF_TITLE_COLOR = colors.HexColor("#0f172a")
+PDF_TEXT_COLOR = colors.HexColor("#1f2937")
+PDF_MUTED_COLOR = colors.HexColor("#4b5563")
 
 CYBER_CYAN = colors.HexColor("#06b6d4")
 DARK_BG = colors.HexColor("#0f172a")
@@ -350,33 +350,26 @@ def generate_single_domain_pdf(domain_id: int, db: Session, password: str):
     buffer = BytesIO()
     encryption = StandardEncryption(userPassword=password, ownerPassword="CyberGuardAdminOwnerPass", canPrint=1)
     
-    # Increased margins and specific layout to avoid overlapping
     doc = SimpleDocTemplate(buffer, pagesize=A4, 
                             rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=72, 
                             encrypt=encryption)
     elements = []
     styles = getSampleStyleSheet()
 
-    # --- Styles ---
     title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=32, textColor=CYBER_CYAN, alignment=TA_CENTER, spaceAfter=6)
     subtitle_style = ParagraphStyle('SubTitle', parent=styles['Normal'], fontSize=12, textColor=PDF_MUTED_COLOR, alignment=TA_CENTER, spaceAfter=30)
-    
     header_style = ParagraphStyle('Header', parent=styles['Heading2'], fontSize=20, textColor=WHITE, backColor=DARK_BG, spaceBefore=20, spaceAfter=15, 
                                   borderPadding=12, alignment=TA_CENTER, borderWidth=1, borderColor=CYBER_CYAN, borderRadius=6)
-    
     section_title_style = ParagraphStyle('SectionTitle', parent=styles['Heading3'], fontSize=16, textColor=PDF_TITLE_COLOR, spaceBefore=25, spaceAfter=12, leading=20)
     body_style = ParagraphStyle('Body', parent=styles['Normal'], fontSize=11, textColor=PDF_TEXT_COLOR, leading=16, spaceAfter=12)
     label_style = ParagraphStyle('Label', parent=styles['Normal'], fontSize=11, textColor=PDF_MUTED_COLOR, fontName='Helvetica-Bold')
 
-    # --- Page 1: Header & Summary ---
     elements.append(Paragraph("CyberGuard", title_style))
     elements.append(Paragraph(f"<b>Domain Intelligence Report</b>", subtitle_style))
     
-    # Domain Header Box
     status_color = STATUS_GREEN if ssl_data.get("status") == "Valid" else STATUS_RED
     status_txt = ssl_data.get("status", "Unknown").upper()
     
-    # Calculate Risk Text
     exp_date_str = whois_data.get("expires") or manual_data.get("expirationDate")
     risk_txt = "Low"
     if exp_date_str:
@@ -403,7 +396,6 @@ def generate_single_domain_pdf(domain_id: int, db: Session, password: str):
     elements.append(dh_table)
     elements.append(Spacer(1, 20))
 
-    # Vital Stats Grid
     vital_data = [
         [Paragraph("Registrar", label_style), Paragraph(whois_data.get("registrar", "Unknown"), body_style)],
         [Paragraph("Risk Level", label_style), Paragraph(f"<font color='{status_color.hexval() if hasattr(status_color, 'hexval') else '#000'}'><b>{risk_txt}</b></font>", body_style)],
@@ -421,9 +413,7 @@ def generate_single_domain_pdf(domain_id: int, db: Session, password: str):
     elements.append(vital_table)
     elements.append(Spacer(1, 30))
 
-    # --- Ownership & Infrastructure ---
     elements.append(Paragraph("Ownership & Infrastructure", section_title_style))
-    
     owner_data = [
         [Paragraph("Primary Owner", label_style), Paragraph(manual_data.get("primaryOwner", "Not Set"), body_style)],
         [Paragraph("Department", label_style), Paragraph(manual_data.get("department", "Not Set"), body_style)],
@@ -443,7 +433,6 @@ def generate_single_domain_pdf(domain_id: int, db: Session, password: str):
     elements.append(owner_table)
     elements.append(Spacer(1, 30))
 
-    # --- Security Checklist ---
     elements.append(Paragraph("Security Compliance", section_title_style))
     sec_checklist = manual_data.get("security", {})
     sec_data = [
@@ -459,7 +448,6 @@ def generate_single_domain_pdf(domain_id: int, db: Session, password: str):
     elements.append(sec_table)
     elements.append(Spacer(1, 30))
 
-    # --- DNS Records ---
     elements.append(Paragraph("DNS Infrastructure", section_title_style))
     if dns_data:
         for r_type, records in dns_data.items():
@@ -473,7 +461,6 @@ def generate_single_domain_pdf(domain_id: int, db: Session, password: str):
     
     elements.append(Spacer(1, 30))
     
-    # --- Audit Log ---
     elements.append(Paragraph("Audit Log", section_title_style))
     notes = manual_data.get("notes", [])
     if notes:
@@ -485,7 +472,6 @@ def generate_single_domain_pdf(domain_id: int, db: Session, password: str):
     else:
         elements.append(Paragraph("No audit logs available.", body_style))
 
-    # Footer
     elements.append(Spacer(1, 40))
     elements.append(Paragraph(f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} by CyberGuard AI", ParagraphStyle('Footer', fontSize=9, textColor=GRAY_TEXT, alignment=TA_CENTER)))
 
@@ -816,26 +802,60 @@ async def _send_expiry_alert(email: str, domain_name: str, expiry_date: str, day
         await fm.send_message(message)
     except Exception: pass
 
-def _get_cert_via_openssl(domain_name):
+# FIXED: Robust SSL Extraction with IPv4 Fallback (Specifically for Google)
+def _get_cert_via_ssl_module(domain_name):
+    # Helper to perform the socket handshake
+    def _fetch_cert(target_ip_or_domain):
+        context = ssl.create_default_context()
+        # Short timeout is crucial to prevent hanging on IPv6 dead-ends
+        with socket.create_connection((target_ip_or_domain, 443), timeout=5) as sock:
+            with context.wrap_socket(sock, server_hostname=domain_name) as ssock:
+                cert = ssock.getpeercert()
+                if not cert:
+                    return None
+
+                # Extract Issuer
+                issuer = "Unknown"
+                for item in cert.get('issuer', []):
+                    for sub_item in item:
+                        if sub_item[0] == 'organizationName':
+                            issuer = sub_item[1]
+                            break
+                    if issuer != "Unknown": break
+                
+                if issuer == "Unknown":
+                    for item in cert.get('issuer', []):
+                         for sub_item in item:
+                            if sub_item[0] == 'commonName':
+                                issuer = sub_item[1]
+                                break
+                         if issuer != "Unknown": break
+
+                not_after = cert.get('notAfter')
+                return {
+                    "status": "Valid",
+                    "issuer": issuer,
+                    "expires": not_after
+                }
+
+    # 1. Try Default Connection (System Preferred, often IPv6)
     try:
-        cmd = f"openssl s_client -connect {domain_name}:443 -servername {domain_name} -showcerts"
-        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
-        if result.returncode != 0: return None
-        output = result.stdout + result.stderr
-        expiry_match = re.search(r'Not After\s*:\s*(.*)$', output, re.IGNORECASE | re.MULTILINE)
-        expiry_date = None
-        if expiry_match:
-            raw_expiry = expiry_match.group(1).strip()
-            expiry_date = raw_expiry.replace("GMT", "").strip()
-            expiry_date = ' '.join(expiry_date.split())
-        if expiry_date: return {"status": "Valid", "expires": expiry_date}
-        else: return None
-    except: return None
+        return _fetch_cert(domain_name)
+    except Exception as e:
+        # 2. Force IPv4 Fallback (Critical for Google/Facebook on dev networks)
+        try:
+            # Explicitly get IPv4 address
+            ip = socket.gethostbyname(domain_name)
+            # If IP is the same as domain (no lookup happened) or distinct, we try the IP
+            return _fetch_cert(ip)
+        except Exception:
+            # If both fail, we return None
+            return None
 
 def _perform_scan(domain: Domain, db: Session):
     domain_name = domain.domain_name
     score = 0
-    ssl_info = {"status": "Unknown", "expires": None}
+    ssl_info = {"status": "Unknown", "expires": None, "issuer": "Unknown"}
     whois_info = {"registrar": "Unknown", "created": None, "expires": None}
     dns_info = {"A": [], "MX": [], "NS": []}
     
@@ -856,13 +876,21 @@ def _perform_scan(domain: Domain, db: Session):
     except: pass
     try: answers = dns.resolver.resolve(domain_name, 'NS'); dns_info["NS"] = [rdata.to_text() for rdata in answers]; score += 10
     except: pass
-    ssl_result = _get_cert_via_openssl(domain_name)
+    
+    # Use the robust SSL function
+    ssl_result = _get_cert_via_ssl_module(domain_name)
     if ssl_result:
-        ssl_info["status"] = ssl_result["status"]; ssl_info["expires"] = ssl_result["expires"]
+        ssl_info["status"] = ssl_result["status"]
+        ssl_info["expires"] = ssl_result["expires"]
+        ssl_info["issuer"] = ssl_result["issuer"]
+        score += 10
     else:
+        # Fallback if SSL socket fails completely
         try: 
             r = requests.head(f"https://{domain_name}", timeout=5, verify=False)
-            if r.status_code < 500: ssl_info["status"] = "Valid"
+            if r.status_code < 500: 
+                ssl_info["status"] = "Valid (Connection OK)"
+                score += 5
         except: pass
 
     if whois_info["expires"]:
@@ -925,10 +953,11 @@ def get_domain_detail(id: int, current_user: User = Depends(auth.get_current_use
         "last_scanned": domain.last_scanned, "ssl_status": ssl_data.get("status", "Unknown"),
         "ssl_expires": ssl_data.get("expires"), "ssl_issuer": ssl_data.get("issuer", "Unknown"),
         "registrar": whois_data.get("registrar", "Unknown"), "creation_date": whois_data.get("created"),
-        "expiration_date": whois_data.get("expires"), # FIXED: Changed whois_info to whois_data
+        "expiration_date": whois_data.get("expires"), 
         "dns_records": dns_data,
         "manual_data": manual_data
     }
+
 @app.post("/domain/update-manual/{id}")
 def update_domain_manual(id: int, payload: dict, current_user: User = Depends(auth.get_current_user), db: Session = Depends(get_db)):
     domain = db.query(Domain).filter(Domain.id == id, Domain.user_id == current_user.id).first()

@@ -122,7 +122,16 @@ const PasswordModal = ({ isOpen, onClose, onSubmit, title }) => {
 };
 
 // ================= LANDING PAGE COMPONENT =================
-const LandingPage = ({ onLogin }) => {
+const LandingPage = ({ onLogin, onRegister }) => {
+  
+  // Smooth scroll handler
+  const scrollToSection = (id) => {
+    const element = document.getElementById(id);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
   return (
     <div className="landing-page">
       <div className="glow-orb orb-1"></div>
@@ -133,11 +142,18 @@ const LandingPage = ({ onLogin }) => {
           Cyber<span>Guard</span>
         </div>
         <div className="nav-actions">
-          <a href="#contact" className="btn-nav contact">
+          <a 
+            href="#contact" 
+            onClick={(e) => { e.preventDefault(); scrollToSection('contact'); }} 
+            className="btn-nav contact"
+          >
             Contact Us
           </a>
           <button onClick={onLogin} className="btn-nav login">
             Login
+          </button>
+          <button onClick={onRegister} className="btn-nav register">
+            Register
           </button>
         </div>
       </nav>
@@ -148,22 +164,47 @@ const LandingPage = ({ onLogin }) => {
           <br /> Monitoring & Detection
         </h1>
         <p className="hero-subtitle">
-          Automated tracking meets manual asset governance. 
-          Secure your infrastructure with AI-powered scanning and enterprise-grade workflows.
+          Unify automated domain intelligence with manual asset governance. Secure your infrastructure with  
+              real-time anomaly detection and comprehensive risk reporting.
         </p>
         <div className="cta-group">
-          <button onClick={onLogin} className="btn-large btn-primary-large">
-            Get Started
-          </button>
+            <button 
+                onClick={() => scrollToSection('features')} 
+                className="btn-large btn-secondary-large" 
+                style={{ 
+                    background: 'transparent', 
+                    border: '1px solid var(--status-blue)',
+                    color: 'var(--status-blue)',
+                    padding: '16px 48px',
+                    fontSize: '1.1rem',
+                    fontWeight: '700',
+                    cursor: 'pointer',
+                    textTransform: 'uppercase',
+                    letterSpacing: '1px',
+                    borderRadius: '2px',
+                    transition: '0.2s'
+                }}
+                onMouseEnter={(e) => {
+                    e.target.style.background = 'rgba(6, 182, 212, 0.1)';
+                    e.target.style.color = 'white';
+                }}
+                onMouseLeave={(e) => {
+                    e.target.style.background = 'transparent';
+                    e.target.style.color = 'var(--status-blue)';
+                }}
+            >
+                Learn More
+            </button>
         </div>
       </header>
 
-      <section className="features-section">
+      <section id="features" className="features-section">
         <div className="section-header">
           <h2>System Capabilities</h2>
           <p>Everything you need to manage your digital presence.</p>
         </div>
         <div className="cards-grid">
+          {/* CARD 1 */}
           <div className="feature-card">
             <div className="card-icon">📡</div>
             <h3>Auto-Tracking</h3>
@@ -171,6 +212,7 @@ const LandingPage = ({ onLogin }) => {
               Instant updates on domain status, DNS propagation, SSL certs, and WHOIS changes via RDAP.
             </p>
           </div>
+          {/* CARD 2 */}
           <div className="feature-card">
             <div className="card-icon">📝</div>
             <h3>Manual Asset Mgmt</h3>
@@ -178,11 +220,37 @@ const LandingPage = ({ onLogin }) => {
               Define ownership, purpose, and infrastructure details for domains that lack public data.
             </p>
           </div>
+          {/* CARD 3 */}
           <div className="feature-card">
             <div className="card-icon">📊</div>
             <h3>Risk Intelligence</h3>
             <p>
               Visual risk scoring based on expiration, compliance checklists, and renewal workflows.
+            </p>
+          </div>
+          
+          {/* CARD 4 (NEW - Real Time) */}
+          <div className="feature-card">
+            <div className="card-icon">⚡</div>
+            <h3>Real-Time Monitoring</h3>
+            <p>
+              Live HTTP/S uptime tracking with adaptive anomaly detection to catch performance bottlenecks before they cause outages.
+            </p>
+          </div>
+          {/* CARD 5 (NEW - Reporting) */}
+          <div className="feature-card">
+            <div className="card-icon">🔒</div>
+            <h3>Password Protected Report</h3>
+            <p>
+              Generate secure, password-protected PDF audit trails and executive summaries for compliance and stakeholders.
+            </p>
+          </div>
+          {/* CARD 6 (NEW - Incidents) */}
+          <div className="feature-card">
+            <div className="card-icon">🚨</div>
+            <h3>Incident Response</h3>
+            <p>
+              Detailed incident logging with root cause analysis, downtime duration tracking, and automated alerting workflows.
             </p>
           </div>
         </div>
@@ -191,7 +259,7 @@ const LandingPage = ({ onLogin }) => {
       <section id="contact" className="contact-section">
         <div className="section-header">
           <h2>Contact Our Developers</h2>
-          <p>Get support from our expert engineering team.</p>
+          <p>Connect with the architects behind your digital defense.</p>
         </div>
         <div className="team-grid">
           <div className="team-card">
@@ -254,7 +322,7 @@ const LandingPage = ({ onLogin }) => {
       </section>
 
       <footer className="landing-footer">
-        &copy; 2026 Domain Monitoring System. All rights reserved.
+        &copy; 2026 Domain Monitoring and Detecting System. All rights reserved.
       </footer>
     </div>
   );
@@ -1777,7 +1845,7 @@ const MonitoringComponent = ({ onBack, token }) => {
     <div className="up-dashboard">
       <aside className="up-sidebar">
         <div className="up-sidebar-header">
-          <h2>ServerPulse</h2>
+          <h2>CyberGuard</h2>
           <div className={`up-status-badge ${isMonitoring ? "live" : "idle"}`}>
             {isMonitoring ? "● System Active" : "○ System Idle"}
           </div>
@@ -2159,7 +2227,10 @@ function App() {
     );
   };
 
-  if (showLanding) return <LandingPage onLogin={() => setShowLanding(false)} />;
+  if (showLanding) return <LandingPage 
+    onLogin={() => { setShowLanding(false); setPage("login"); }} 
+    onRegister={() => { setShowLanding(false); setPage("register"); }} 
+  />;
 
   if (userLoggedIn) return <HomePage />;
 
