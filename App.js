@@ -1876,34 +1876,6 @@ const MonitoringComponent = ({ onBack, token, username }) => {
           )}
         </div>
       );
-    } else if (activeTab === "settings") {
-      return (
-        <div className="up-monitors-list">
-          <div className="up-widget">
-            <h4>Account Settings</h4>
-            <div style={{display: "grid", gap: "15px"}}>
-              <div>
-                <label style={{display: "block", color: "var(--text-muted)", marginBottom: "5px", fontSize: "0.85rem"}}>API Key</label>
-                <input type="text" value="ur123456789" readOnly style={{width: "100%", padding: "10px", background: "var(--bg-dark)", border: "1px solid var(--border-color)", color: "white", borderRadius: "4px"}} />
-              </div>
-              <div>
-                <label style={{display: "block", color: "var(--text-muted)", marginBottom: "5px", fontSize: "0.85rem"}}>Timezone</label>
-                <select style={{width: "100%", padding: "10px", background: "var(--bg-dark)", border: "1px solid var(--border-color)", color: "white", borderRadius: "4px"}}>
-                  <option>UTC</option>
-                  <option>GMT+3 (Addis Ababa)</option>
-                </select>
-              </div>
-            </div>
-          </div>
-          <div className="up-widget">
-            <h4>Notifications</h4>
-            <div style={{display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px"}}>
-               <input type="checkbox" defaultChecked />
-               <span>Email Alerts</span>
-            </div>
-          </div>
-        </div>
-      );
     }
   };
 
@@ -1942,12 +1914,6 @@ const MonitoringComponent = ({ onBack, token, username }) => {
             onClick={() => setActiveTab("incidents")}
           >
             Incidents
-          </div>
-          <div 
-            className={`nav-item ${activeTab === "settings" ? "active" : ""}`}
-            onClick={() => setActiveTab("settings")}
-          >
-            Settings
           </div>
         </nav>
 

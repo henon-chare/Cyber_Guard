@@ -5,6 +5,11 @@ from typing import List, Dict
 import httpx
 import socket
 from urllib.parse import urlparse
+from datetime import datetime
+
+# ADDED IMPORTS FOR DATABASE LOGGING
+from database import SessionLocal
+from models import Incident, Monitor
 
 class SmartDetector:
     """
@@ -54,6 +59,81 @@ class MonitorState:
         self.baseline_avgs: Dict[str, float] = {}
         self.current_statuses: Dict[str, str] = {}
         self.http_status_codes: Dict[str, int] = {}
+        # ADDED: Track previous status to detect transitions (UP -> DOWN)
+        self.previous_statuses: Dict[str, str] = {}
+
+# ADDED FUNCTION: Handles DB writing for incidents
+async def handle_incident_logic(target: str, state: MonitorState):
+    current_status = state.current_statuses.get(target, "Idle")
+    previous_status = state.previous_statuses.get(target, "Idle")
+    
+    # Helper to determine if "DOWN"
+    # We consider TIMEOUT, REFUSED, 404, and 5xx errors as "Down"
+    is_down = (
+        "DOWN" in current_status or 
+        "ERROR" in current_status or 
+        "REFUSED" in current_status or 
+        "404" in current_status or 
+        "TIMEOUT" in current_status
+    )
+    
+    was_down = (
+        "DOWN" in previous_status or 
+        "ERROR" in previous_status or 
+        "REFUSED" in previous_status or 
+        "404" in previous_status or 
+        "TIMEOUT" in previous_status
+    )
+
+    # CASE 1: Transition from UP to DOWN -> Create Incident
+    if is_down and not was_down:
+        db = SessionLocal()
+        try:
+            # Find the monitor ID associated with this URL
+            monitor = db.query(Monitor).filter(Monitor.target_url == target).first()
+            if monitor:
+                new_incident = Incident(
+                    monitor_id=monitor.id,
+                    status="Ongoing",
+                    error_type=current_status,
+                    started_at=datetime.utcnow()
+                )
+                db.add(new_incident)
+                db.commit()
+                print(f"[DB] Incident STARTED for {target}")
+        except Exception as e:
+            print(f"[DB Error] Failed to create incident: {e}")
+            db.rollback()
+        finally:
+            db.close()
+
+    # CASE 2: Transition from DOWN to UP -> Close Incident
+    elif not is_down and was_down:
+        db = SessionLocal()
+        try:
+            # Find the monitor ID
+            monitor = db.query(Monitor).filter(Monitor.target_url == target).first()
+            if monitor:
+                # Find the most recent 'Ongoing' incident for this monitor
+                incident = db.query(Incident).filter(
+                    Incident.monitor_id == monitor.id,
+                    Incident.status == "Ongoing"
+                ).order_by(Incident.started_at.desc()).first()
+                
+                if incident:
+                    incident.status = "Resolved"
+                    incident.ended_at = datetime.utcnow()
+                    incident.duration_seconds = int((incident.ended_at - incident.started_at).total_seconds())
+                    db.commit()
+                    print(f"[DB] Incident RESOLVED for {target} (Duration: {incident.duration_seconds}s)")
+        except Exception as e:
+            print(f"[DB Error] Failed to close incident: {e}")
+            db.rollback()
+        finally:
+            db.close()
+
+    # Update previous state for next loop
+    state.previous_statuses[target] = current_status
 
 async def monitoring_loop(state: MonitorState):
     headers = {
@@ -109,6 +189,11 @@ async def monitoring_loop(state: MonitorState):
             except Exception as e:
                 state.current_statuses[target] = f"ERROR: {str(e)[:20]}"
                 update_history(state, target, 0)
+
+            # --- ADDED: CALL INCIDENT LOGIC ---
+            # This checks if the status changed and updates the DB accordingly
+            await handle_incident_logic(target, state)
+
         await asyncio.sleep(1.5) 
 
 def update_history(state: MonitorState, target: str, val: float):
